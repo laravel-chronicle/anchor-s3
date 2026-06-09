@@ -21,7 +21,7 @@
   ],
   "require": {
     "php": "^8.2",
-    "laravel-chronicle/core": "@dev",
+    "laravel-chronicle/core": "^1.11",
     "aws/aws-sdk-php": "^3.0"
   },
   "require-dev": {
@@ -58,14 +58,5 @@
   "scripts": {
     "analyse": "vendor/bin/phpstan analyse --memory-limit=2G",
     "test": "vendor/bin/pest"
-  },
-  "repositories": [
-    {
-      "type": "path",
-      "url": "../core",
-      "options": {
-        "symlink": true
-      }
-    }
-  ]
+  }
 }
