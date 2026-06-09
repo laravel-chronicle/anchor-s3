@@ -1,10 +1,15 @@
 <?php
 
+use Aws\Api\DateTimeResult;
+use Aws\Command;
 use Aws\CommandInterface;
 use Aws\Result;
+use Aws\S3\Exception\S3Exception;
+use Chronicle\Anchoring\AnchorReceipt;
 use Chronicle\Anchoring\CheckpointDigest;
 use Chronicle\AnchorS3\S3ObjectLockAnchor;
 use Chronicle\Checkpoints\Checkpoint;
+use GuzzleHttp\Psr7\Utils;
 use Illuminate\Support\Carbon;
 use Psr\Http\Message\RequestInterface;
 
@@ -64,4 +69,69 @@ it('anchor() PutObjects the digest under an object lock and returns a receipt', 
         ->and($receipt->reference)->toBe('worm-bucket/anchors/'.$cp->id.'.digest@ver-123')
         ->and($receipt->proof)->toBe('"etag-abc"');
 
+});
+
+/**
+ * A GetObject Result for a locked object holding $body.
+ *
+ * @param  array<string, mixed>  $overrides
+ */
+function lockedGetResult(string $body, array $overrides = []): Result
+{
+    return new Result(array_merge([
+        'Body' => Utils::streamFor($body),
+        'ObjectLockMode' => 'COMPLIANCE',
+        'ObjectLockRetainUntilDate' => new DateTimeResult('+10 years'),
+        'ETag' => '"etag-abc"',
+    ], $overrides));
+}
+
+function s3Receipt(Checkpoint $cp): AnchorReceipt
+{
+    return new AnchorReceipt(
+        provider: 's3-object-lock',
+        reference: 'worm-bucket/anchors/'.$cp->id.'.digest@ver-123',
+        proof: '"etag-abc"',
+        anchoredAt: now()->toImmutable(),
+    );
+}
+
+it('verify() returns true when the locked object holds the matching digest', function () {
+    $cp = fakeCheckpoint();
+    $s3 = makeMockS3Client([lockedGetResult(CheckpointDigest::for($cp))]);
+
+    $anchor = new S3ObjectLockAnchor(['bucket' => 'worm-bucket', 'prefix' => 'anchors'], $s3);
+
+    expect($anchor->verify($cp, s3Receipt($cp)))->toBeTrue();
+});
+
+it('verify() returns false when the stored bytes do not match the digest', function () {
+    $cp = fakeCheckpoint();
+    $s3 = makeMockS3Client([lockedGetResult(str_repeat('f', 64))]); // wrong digest
+
+    $anchor = new S3ObjectLockAnchor(['bucket' => 'worm-bucket', 'prefix' => 'anchors'], $s3);
+
+    expect($anchor->verify($cp, s3Receipt($cp)))->toBeFalse();
+});
+
+it('verify() returns false when the object carries no lock metadata', function () {
+    $cp = fakeCheckpoint();
+    $s3 = makeMockS3Client([
+        lockedGetResult(CheckpointDigest::for($cp), ['ObjectLockMode' => null, 'ObjectLockRetainUntilDate' => null]),
+    ]);
+
+    $anchor = new S3ObjectLockAnchor(['bucket' => 'worm-bucket', 'prefix' => 'anchors'], $s3);
+
+    expect($anchor->verify($cp, s3Receipt($cp)))->toBeFalse();
+});
+
+it('verify() returns false when GetObject throws (missing object)', function () {
+    $cp = fakeCheckpoint();
+    $s3 = makeMockS3Client([
+        new S3Exception('not found', new Command('GetObject')),
+    ]);
+
+    $anchor = new S3ObjectLockAnchor(['bucket' => 'worm-bucket', 'prefix' => 'anchors'], $s3);
+
+    expect($anchor->verify($cp, s3Receipt($cp)))->toBeFalse();
 });

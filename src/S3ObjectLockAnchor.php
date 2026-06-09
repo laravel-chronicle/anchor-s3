@@ -8,8 +8,9 @@ use Chronicle\Anchoring\CheckpointDigest;
 use Chronicle\Checkpoints\Checkpoint;
 use Chronicle\Contracts\AnchorProvider;
 use InvalidArgumentException;
-use LogicException;
+use Psr\Http\Message\StreamInterface;
 use RuntimeException;
+use Throwable;
 
 /**
  * Anchors a checkpoint by writing its digest to an S3 Object Lock (WORM) object
@@ -100,7 +101,58 @@ class S3ObjectLockAnchor implements AnchorProvider
 
     public function verify(Checkpoint $checkpoint, AnchorReceipt $receipt): bool
     {
-        throw new LogicException('verify() implemented in Task 4.');
+        if ($receipt->reference === null) {
+            return false;
+        }
+
+        $at = strrpos($receipt->reference, '@');
+        if ($at === false) {
+            return false;
+        }
+
+        $bucketKey = substr($receipt->reference, 0, $at);
+        $versionId = substr($receipt->reference, $at + 1);
+
+        $slash = strpos($bucketKey, '/');
+        if ($slash === false || $versionId === '') {
+            return false;
+        }
+
+        $bucket = substr($bucketKey, 0, $slash);
+        $key = substr($bucketKey, $slash + 1);
+
+        try {
+            $result = $this->s3->getObject([
+                'Bucket' => $bucket,
+                'Key' => $key,
+                'VersionId' => $versionId,
+            ]);
+        } catch (Throwable) {
+            return false;
+        }
+
+        $body = $result['Body'];
+        $stored = $body instanceof StreamInterface ? (string) $body : (is_string($body) ? $body : '');
+
+        if (! hash_equals(CheckpointDigest::for($checkpoint), $stored)) {
+            return false;
+        }
+
+        $mode = $result['ObjectLockMode'] ?? null;
+        $retainUntil = $result['ObjectLockRetainUntilDate'] ?? null;
+
+        if (! is_string($mode) || $mode === '' || $retainUntil === null) {
+            return false;
+        }
+
+        if ($receipt->proof !== null) {
+            $etag = $result['ETag'] ?? null;
+            if (! is_string($etag) || ! hash_equals($receipt->proof, $etag)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     protected function objectKey(Checkpoint $checkpoint): string
