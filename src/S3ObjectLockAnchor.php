@@ -4,10 +4,12 @@ namespace Chronicle\AnchorS3;
 
 use Aws\S3\S3Client;
 use Chronicle\Anchoring\AnchorReceipt;
+use Chronicle\Anchoring\CheckpointDigest;
 use Chronicle\Checkpoints\Checkpoint;
 use Chronicle\Contracts\AnchorProvider;
 use InvalidArgumentException;
 use LogicException;
+use RuntimeException;
 
 /**
  * Anchors a checkpoint by writing its digest to an S3 Object Lock (WORM) object
@@ -68,7 +70,32 @@ class S3ObjectLockAnchor implements AnchorProvider
 
     public function anchor(Checkpoint $checkpoint): AnchorReceipt
     {
-        throw new LogicException('anchor() implemented in Task 3.');
+        $digest = CheckpointDigest::for($checkpoint);
+        $key = $this->objectKey($checkpoint);
+        $retainUntil = now()->addDays($this->retainDays)->toImmutable();
+
+        $result = $this->s3->putObject([
+            'Bucket' => $this->bucket,
+            'Key' => $key,
+            'Body' => $digest,
+            'ContentType' => 'text/plain',
+            'ObjectLockMode' => $this->mode,
+            'ObjectLockRetainUntilDate' => $retainUntil->format(DATE_ATOM),
+        ]);
+
+        $etag = $result['ETag'] ?? null;
+        $versionId = $result['VersionId'] ?? null;
+
+        if (! is_string($etag) || ! is_string($versionId)) {
+            throw new RuntimeException('S3 PutObject did not return an ETag and VersionId (is Object Lock + versioning enabled on the bucket?).');
+        }
+
+        return new AnchorReceipt(
+            provider: $this->name(),
+            reference: "$this->bucket/$key@$versionId",
+            proof: $etag,
+            anchoredAt: now()->toImmutable(),
+        );
     }
 
     public function verify(Checkpoint $checkpoint, AnchorReceipt $receipt): bool
