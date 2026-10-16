@@ -210,9 +210,17 @@ it('anchor() throws when PutObject returns no ETag/VersionId (bucket not version
     $cp = fakeCheckpoint();
     $s3 = makeMockS3Client([new Result([])]); // neither ETag nor VersionId returned
 
-    $anchor = new S3ObjectLockAnchor(['bucket' => 'worm-bucket', 'prefix' => 'anchors'], $s3);
+    $bucket = 'worm-bucket';
 
-    expect(fn () => $anchor->anchor($cp))->toThrow(RuntimeException::class);
+    $anchor = new S3ObjectLockAnchor(['bucket' => $bucket, 'prefix' => 'anchors'], $s3);
+
+    expect(fn () => $anchor->anchor($cp))
+        ->toThrow(function (RuntimeException $e) use ($bucket) {
+            expect($e->getMessage())
+                ->toContain($bucket)
+                ->toContain('Object Lock')
+                ->toContain('versioning');
+        });
 });
 
 it('verify() returns false when the receipt reference is null', function () {

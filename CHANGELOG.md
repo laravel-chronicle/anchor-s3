@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Include the affected bucket name in the exception message when S3 PutObject returns no ETag or VersionId.
+
 ---
 
 ## [1.1.0] - 2026-07-15
