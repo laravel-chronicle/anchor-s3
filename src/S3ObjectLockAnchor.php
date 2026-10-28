@@ -90,7 +90,8 @@ class S3ObjectLockAnchor implements AnchorProvider
         $versionId = $result['VersionId'] ?? null;
 
         if (! is_string($etag) || ! is_string($versionId)) {
-            throw new RuntimeException('S3 PutObject did not return an ETag and VersionId (is Object Lock + versioning enabled on the bucket?).');
+            // TODO: Add a reference to `chronicle:anchor:doctor` once the doctor command from #4 is merged.
+            throw new RuntimeException("S3 PutObject to bucket '$this->bucket' did not return an ETag and VersionId (is Object Lock + versioning enabled on the bucket?).");
         }
 
         return new AnchorReceipt(
