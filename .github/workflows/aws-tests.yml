@@ -18,6 +18,16 @@ jobs:
     # Gate on the secret so this skips cleanly rather than failing when absent
     # (e.g. on a fork that somehow reaches this workflow).
     if: ${{ github.repository == 'laravel-chronicle/anchor-s3' }}
+    permissions:
+      contents: read
+      # OIDC: the job trades a GitHub token for short-lived AWS credentials
+      # (role in ANCHOR_S3_AWS_ROLE_ARN, trusted for this repo's main branch only).
+      # No long-lived AWS keys are stored in this repo, except the restricted
+      # no-permission key below, which the missing-permission test needs.
+      id-token: write
+    env:
+      AWS_ROLE_ARN: ${{ secrets.ANCHOR_S3_AWS_ROLE_ARN }}
+      ANCHOR_S3_TEST_BUCKET: ${{ secrets.ANCHOR_S3_TEST_BUCKET }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2.40.0
@@ -26,12 +36,17 @@ jobs:
           extensions: sodium
           coverage: none
       - run: composer update --prefer-dist --no-interaction
+      # Skip cleanly rather than fail when the role or bucket is not configured.
+      - name: Configure AWS credentials (OIDC)
+        if: env.AWS_ROLE_ARN != '' && env.ANCHOR_S3_TEST_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.ANCHOR_S3_AWS_REGION }}
+          role-session-name: anchor-s3-${{ github.run_id }}
+          role-duration-seconds: 900
       - name: Execute real-AWS tier
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.ANCHOR_S3_AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.ANCHOR_S3_AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.ANCHOR_S3_AWS_REGION }}
-          ANCHOR_S3_TEST_BUCKET: ${{ secrets.ANCHOR_S3_TEST_BUCKET }}
           ANCHOR_S3_TEST_RETENTION_MODE: GOVERNANCE
           ANCHOR_S3_AWS_TESTS: '1'
           # Restricted key with s3:PutObject but NOT s3:PutObjectRetention, for
@@ -39,7 +54,7 @@ jobs:
           ANCHOR_S3_TEST_NOPERM_KEY: ${{ secrets.ANCHOR_S3_TEST_NOPERM_KEY }}
           ANCHOR_S3_TEST_NOPERM_SECRET: ${{ secrets.ANCHOR_S3_TEST_NOPERM_SECRET }}
         run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$ANCHOR_S3_TEST_BUCKET" ]; then
+          if [ -z "$AWS_ROLE_ARN" ] || [ -z "$ANCHOR_S3_TEST_BUCKET" ]; then
             echo "AWS secrets not configured; skipping real-AWS tier."
             exit 0
           fi
